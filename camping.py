@@ -10,11 +10,13 @@ from itertools import count, groupby
 
 from dateutil import rrule
 
+from clients.sms_client import SMSClient
 from clients.recreation_client import RecreationClient
 from enums.date_format import DateFormat
 from enums.emoji import Emoji
 from utils import formatter
 from utils.camping_argparser import CampingArgumentParser
+import os 
 
 LOG = logging.getLogger(__name__)
 log_formatter = logging.Formatter(
@@ -24,6 +26,33 @@ sh = logging.StreamHandler()
 sh.setFormatter(log_formatter)
 LOG.addHandler(sh)
 
+
+def get_permit_information(
+    park_id, start_date, end_date, num_permits=1
+):
+   
+
+    # Get each first of the month for months in the range we care about.
+    start_of_month = datetime(start_date.year, start_date.month, 1)
+    months = list(
+        rrule.rrule(rrule.MONTHLY, dtstart=start_of_month, until=end_date)
+    )
+
+    # Get data for each month.
+    api_data = []
+    for month_date in months:
+        api_data.append(RecreationClient.get_permit_availability(park_id, month_date))
+
+    # Collapse the data into the described output format.
+    # Filter by campsite_type if necessary.
+    dates = []
+
+    for month_data in api_data:
+        availability_data = list(api_data[0]["payload"]["availability"].items())[0][1]["date_availability"]
+        for date, availability in availability_data.items():
+            if availability["remaining"] >= num_permits: 
+                dates.append(date)
+    return dates
 
 def get_park_information(
     park_id, start_date, end_date, campsite_type=None, campsite_ids=()
@@ -90,7 +119,6 @@ def get_park_information(
                 available.append(date)
             if available:
                 a += available
-
     return data
 
 
@@ -200,6 +228,64 @@ def check_park(
     return current, maximum, availabilities_filtered, park_name
 
 
+def check_permit(park_id, start_date, end_date, num_permits=1):
+    dates = get_permit_information(
+        park_id, start_date, end_date, num_permits
+    )
+    permit_name = RecreationClient.get_permit_name(park_id)
+     
+    num_days = (end_date - start_date).days
+    valid_dates = [end_date - timedelta(days=i) for i in range(1, num_days + 1)]
+    valid_dates = set(
+        formatter.format_date(
+            i, format_string=DateFormat.ISO_DATE_FORMAT_RESPONSE.value
+        )
+        for i in valid_dates
+    )
+    dates = [date for date in valid_dates if date in dates]
+    ordinal_dates = [
+        datetime.strptime(
+            dstr, DateFormat.ISO_DATE_FORMAT_RESPONSE.value
+        )
+        for dstr in dates
+    ]
+    return ordinal_dates, permit_name
+
+
+def generate_human_output_permits(
+    info_by_permit_id
+):
+    out = []
+    has_availabilities = False
+    for park_id, info in info_by_permit_id.items():
+        dates, permit_name = info
+        message = ""
+        if len(dates) > 0:
+            emoji = Emoji.SUCCESS.value
+            has_availabilities = True
+            message = "Permits Available on the following dates: "
+        else:
+            emoji = Emoji.FAILURE.value
+            message = "No Permits Available"
+
+        out.append(
+            f"{emoji} {message}".format(
+                emoji=emoji, message=message
+            )
+        )
+
+
+        
+        for date in dates:
+            out.append(
+                "    {date}".format(
+                    date=date.strftime(DateFormat.INPUT_DATE_FORMAT.value)
+                )
+            )
+
+    return has_availabilities, "\n".join(out)
+
+
 def generate_human_output(
     info_by_park_id, start_date, end_date, gen_campsite_info=False
 ):
@@ -287,12 +373,31 @@ def main(parks, json_output=False):
     print(output)
     return has_availabilities
 
-
+def main_permits(permits, start_date, end_date):
+    output_file_r = open(r"./output.txt","r")
+    last_output = "".join(output_file_r.readlines())
+    output_file_r.close()
+    os.remove("./output.txt")
+    output_file_w = open(r"./output.txt","w")
+    info_by_permit_id = {}    
+    for permit_id in permits:
+        info_by_permit_id[permit_id] = check_permit(
+            permit_id, start_date, end_date)
+    has_availabilities, output = generate_human_output_permits(
+            info_by_permit_id
+        )
+    print(output)
+    output_file_w.write(output)
+    output_file_w.close()
+    if has_availabilities and output != last_output:
+        SMSClient.send_message(output)
+    
 if __name__ == "__main__":
     parser = CampingArgumentParser()
     args = parser.parse_args()
-
     if args.debug:
         LOG.setLevel(logging.DEBUG)
-
-    main(args.parks, json_output=args.json_output)
+    if args.permits:
+        main_permits(args.permits, args.start_date, args.end_date)
+    else:
+        main(args.parks, json_output=args.json_output)

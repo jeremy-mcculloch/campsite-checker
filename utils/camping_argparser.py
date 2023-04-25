@@ -12,6 +12,7 @@ class CampingArgumentParser(argparse.ArgumentParser):
         self.add_argument(
             "--debug", "-d", action="store_true", help="Debug log level"
         )
+        
         self.add_argument(
             "--start-date",
             required=True,
@@ -73,10 +74,18 @@ class CampingArgumentParser(argparse.ArgumentParser):
             action="store_true",
             help="Read list of park ID(s) from stdin instead",
         )
+        parks_group.add_argument(
+            "--permits",
+            dest="permits",
+            metavar="permit",
+            nargs="+",
+            help="Permit ID(s)",
+            type=int,
+        )
 
     def parse_args(self, args=None, namespace=None):
         args = super().parse_args(args, namespace)
-        args.parks = args.parks or [p.strip() for p in sys.stdin]
+        args.parks = args.parks or []
         self._validate_args(args)
         return args
 

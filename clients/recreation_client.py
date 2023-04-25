@@ -2,7 +2,7 @@ import logging
 
 import requests
 import user_agent 
-
+import sys
 from utils import formatter
 
 LOG = logging.getLogger(__name__)
@@ -11,6 +11,12 @@ LOG = logging.getLogger(__name__)
 class RecreationClient:
 
     BASE_URL = "https://www.recreation.gov"
+    PERMITS_AVAIL_ENDPOINT = (
+        BASE_URL + "/api/permits/{park_id}/availability/month"
+    )
+    PERMITS_ENDPOINT = (
+        BASE_URL + "/api/permits/{park_id}"
+    )
     AVAILABILITY_ENDPOINT = (
         BASE_URL + "/api/camps/availability/campground/{park_id}/month"
     )
@@ -18,6 +24,22 @@ class RecreationClient:
 
     headers = {"User-Agent": user_agent.generate_user_agent() }
     
+    @classmethod
+    def get_permit_availability(cls, park_id, month_date):
+        params = {"start_date": formatter.format_date(month_date), 'commercial_acct': False, 'is_lottery': False}
+        LOG.debug(
+            "Querying for {} with these params: {}".format(park_id, params)
+        )
+        url = cls.PERMITS_AVAIL_ENDPOINT.format(park_id=park_id)
+        resp = cls._send_request(url, params)
+        return resp
+
+    @classmethod
+    def get_permit_name(cls, park_id):
+        resp = cls._send_request(
+            cls.PERMITS_ENDPOINT.format(park_id=park_id), {}
+        )
+        return resp ["payload"]["addresses"][0]["description1"]
     @classmethod
     def get_availability(cls, park_id, month_date):
         params = {"start_date": formatter.format_date(month_date)}
